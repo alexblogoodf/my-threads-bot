@@ -103,7 +103,6 @@ def main():
     with open(post_path, "r", encoding="utf-8") as f:
         post_data = json.load(f)
 
-    # Достаём текст и топик из JSON без использования квадратных скобок в тексте
     text = post_data.get('text', '').strip()
     topic = post_data.get('topic', '').strip()
     media_files = post_data.get("media_files", [])
@@ -181,6 +180,7 @@ def main():
         print("Публикуем ответ (Reply)...")
         reply_container_id = create_main_container(
             text=post_data["reply_text"],
+            topic_tag=topic if topic else None,  # Теперь топик прикрепляется и к ответу
             reply_to_id=published_main_id
         )
         time.sleep(5)
