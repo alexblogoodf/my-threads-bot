@@ -14,7 +14,7 @@ GRAPH_URL = "https://graph.threads.net/v1.0"
 def get_raw_media_url(folder_name, filename):
     if not filename:
         return None
-    # Используем jsDelivr CDN для обхода блокировок raw.githubusercontent.com
+    # Используем jsDelivr CDN для стабильной отдачи медиафайлов
     return f"https://cdn.jsdelivr.net/gh/{REPO_NAME}@{BRANCH}/posts/{folder_name}/{filename}"
 
 def create_item_container(media_url, is_carousel=False):
@@ -38,7 +38,7 @@ def create_item_container(media_url, is_carousel=False):
         raise Exception(f"Ошибка создания медиа-контейнера: {res}")
     return res["id"]
 
-def create_main_container(text, media_children=None, reply_to_id=None):
+def create_main_container(text, topic_tag=None, media_children=None, reply_to_id=None):
     """Создаёт главный контейнер (Текст, Карусель или Ответ)"""
     url = f"{GRAPH_URL}/{USER_ID}/threads"
     payload = {
@@ -46,16 +46,17 @@ def create_main_container(text, media_children=None, reply_to_id=None):
         "text": text,
     }
 
+    if topic_tag:
+        payload["topic_tag"] = topic_tag
+
     if reply_to_id:
         payload["reply_to_id"] = reply_to_id
 
-    # Определяем media_type для запроса
     if media_children:
         if len(media_children) > 1:
             payload["media_type"] = "CAROUSEL"
             payload["children"] = ",".join(media_children)
     else:
-        # Для любых текстовых постов и ответов без медиа обязателен параметр media_type = TEXT
         payload["media_type"] = "TEXT"
 
     res = requests.post(url, data=payload).json()
@@ -102,7 +103,9 @@ def main():
     with open(post_path, "r", encoding="utf-8") as f:
         post_data = json.load(f)
 
-    full_text = f"[{post_data.get('topic', '')}]\n\n{post_data.get('text', '')}"
+    # Достаём текст и топик из JSON без использования квадратных скобок в тексте
+    text = post_data.get('text', '').strip()
+    topic = post_data.get('topic', '').strip()
     media_files = post_data.get("media_files", [])
 
     main_container_id = None
@@ -119,14 +122,16 @@ def main():
 
         time.sleep(10) # Задержка на обработку медиа серверами Meta
         
-        # Создаём родительский контейнер карусели
         url = f"{GRAPH_URL}/{USER_ID}/threads"
         payload = {
             "access_token": ACCESS_TOKEN,
             "media_type": "CAROUSEL",
             "children": ",".join(child_ids),
-            "text": full_text
+            "text": text
         }
+        if topic:
+            payload["topic_tag"] = topic
+
         res = requests.post(url, data=payload).json()
         if "id" not in res:
             raise Exception(f"Ошибка создания карусели: {res}")
@@ -141,13 +146,16 @@ def main():
         url = f"{GRAPH_URL}/{USER_ID}/threads"
         payload = {
             "access_token": ACCESS_TOKEN,
-            "text": full_text,
+            "text": text,
             "media_type": "VIDEO" if is_video else "IMAGE"
         }
         if is_video:
             payload["video_url"] = media_url
         else:
             payload["image_url"] = media_url
+
+        if topic:
+            payload["topic_tag"] = topic
 
         res = requests.post(url, data=payload).json()
         if "id" not in res:
@@ -157,16 +165,10 @@ def main():
     # --- СЦЕНАРИЙ 3: Только текст ---
     else:
         print("Текстовый пост без медиа...")
-        url = f"{GRAPH_URL}/{USER_ID}/threads"
-        payload = {
-            "access_token": ACCESS_TOKEN,
-            "text": full_text,
-            "media_type": "TEXT"
-        }
-        res = requests.post(url, data=payload).json()
-        if "id" not in res:
-            raise Exception(f"Ошибка создания текстового поста: {res}")
-        main_container_id = res["id"]
+        main_container_id = create_main_container(
+            text=text,
+            topic_tag=topic if topic else None
+        )
 
     # Публикация основного поста
     time.sleep(10)
