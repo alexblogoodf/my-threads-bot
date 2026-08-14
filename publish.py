@@ -14,7 +14,8 @@ GRAPH_URL = "https://graph.threads.net/v1.0"
 def get_raw_media_url(folder_name, filename):
     if not filename:
         return None
-    return f"https://raw.githubusercontent.com/{REPO_NAME}/{BRANCH}/posts/{folder_name}/{filename}"
+    # Используем jsDelivr CDN для обхода блокировок raw.githubusercontent.com
+    return f"https://cdn.jsdelivr.net/gh/{REPO_NAME}@{BRANCH}/posts/{folder_name}/{filename}"
 
 def create_item_container(media_url, is_carousel=False):
     """Создаёт контейнер для одиночного медиа элемента"""
@@ -48,14 +49,13 @@ def create_main_container(text, media_children=None, reply_to_id=None):
     if reply_to_id:
         payload["reply_to_id"] = reply_to_id
 
+    # Определяем media_type для запроса
     if media_children:
-        if len(media_children) == 1:
-            # Если медиа одно, привязываем его напрямую
-            pass # Логика для 1 медиа обрабатывается через create_item_container
-        else:
+        if len(media_children) > 1:
             payload["media_type"] = "CAROUSEL"
             payload["children"] = ",".join(media_children)
-    elif not reply_to_id:
+    else:
+        # Для любых текстовых постов и ответов без медиа обязателен параметр media_type = TEXT
         payload["media_type"] = "TEXT"
 
     res = requests.post(url, data=payload).json()
@@ -128,6 +128,8 @@ def main():
             "text": full_text
         }
         res = requests.post(url, data=payload).json()
+        if "id" not in res:
+            raise Exception(f"Ошибка создания карусели: {res}")
         main_container_id = res["id"]
 
     # --- СЦЕНАРИЙ 2: Одна картинка или видео ---
@@ -148,6 +150,8 @@ def main():
             payload["image_url"] = media_url
 
         res = requests.post(url, data=payload).json()
+        if "id" not in res:
+            raise Exception(f"Ошибка создания медиа-поста: {res}")
         main_container_id = res["id"]
 
     # --- СЦЕНАРИЙ 3: Только текст ---
@@ -160,6 +164,8 @@ def main():
             "media_type": "TEXT"
         }
         res = requests.post(url, data=payload).json()
+        if "id" not in res:
+            raise Exception(f"Ошибка создания текстового поста: {res}")
         main_container_id = res["id"]
 
     # Публикация основного поста
