@@ -8,7 +8,6 @@ ACCESS_TOKEN = os.environ.get("THREADS_ACCESS_TOKEN")
 USER_ID = os.environ.get("THREADS_USER_ID")
 REPO_NAME = os.environ.get("GITHUB_REPOSITORY") # user/repo
 BRANCH = os.environ.get("GITHUB_REF_NAME", "main")
-
 GRAPH_URL = "https://graph.threads.net/v1.0"
 
 def get_raw_media_url(folder_name, filename):
@@ -21,18 +20,15 @@ def create_item_container(media_url, is_carousel=False):
     """Создаёт контейнер для одиночного медиа элемента"""
     url = f"{GRAPH_URL}/{USER_ID}/threads"
     is_video = media_url.lower().endswith(('.mp4', '.mov'))
-    
     payload = {
         "access_token": ACCESS_TOKEN,
         "media_type": "VIDEO" if is_video else "IMAGE",
         "is_carousel_item": "true" if is_carousel else "false"
     }
-    
     if is_video:
         payload["video_url"] = media_url
     else:
         payload["image_url"] = media_url
-
     res = requests.post(url, data=payload).json()
     if "id" not in res:
         raise Exception(f"Ошибка создания медиа-контейнера: {res}")
@@ -45,23 +41,31 @@ def create_main_container(text, topic_tag=None, media_children=None, reply_to_id
         "access_token": ACCESS_TOKEN,
         "text": text,
     }
-
     if topic_tag:
         payload["topic_tag"] = topic_tag
-
     if reply_to_id:
         payload["reply_to_id"] = reply_to_id
-
     if media_children:
         if len(media_children) > 1:
             payload["media_type"] = "CAROUSEL"
             payload["children"] = ",".join(media_children)
     else:
         payload["media_type"] = "TEXT"
-
     res = requests.post(url, data=payload).json()
     if "id" not in res:
         raise Exception(f"Ошибка создания главного контейнера: {res}")
+    return res["id"]
+
+def publish_container(creation_id):
+    """Публикует подготовленный контейнер"""
+    url = f"{GRAPH_URL}/{USER_ID}/threads_publish"
+    payload = {
+        "access_token": ACCESS_TOKEN,
+        "creation_id": creation_id
+    }
+    res = requests.post(url, data=payload).json()
+    if "id" not in res:
+        raise Exception(f"Ошибка публикации: {res}")
     return res["id"]
 
 def check_container_status(container_id):
@@ -96,18 +100,6 @@ def check_container_status(container_id):
             
     raise Exception("⏱ Превышено время ожидания обработки видео (5 минут).")
 
-def publish_container(creation_id):
-    """Публикует подготовленный контейнер"""
-    url = f"{GRAPH_URL}/{USER_ID}/threads_publish"
-    payload = {
-        "access_token": ACCESS_TOKEN,
-        "creation_id": creation_id
-    }
-    res = requests.post(url, data=payload).json()
-    if "id" not in res:
-        raise Exception(f"Ошибка публикации: {res}")
-    return res["id"]
-
 def main():
     state_file = "state.json"
     if os.path.exists(state_file):
@@ -129,7 +121,6 @@ def main():
     current_index = state["next_index"] % len(folders)
     folder_name = folders[current_index]
     post_path = os.path.join(posts_dir, folder_name, "content.json")
-
     print(f"Публикуем пост из папки: {folder_name} ({current_index + 1}/{len(folders)})")
 
     with open(post_path, "r", encoding="utf-8") as f:
@@ -148,12 +139,16 @@ def main():
         for filename in media_files:
             media_url = get_raw_media_url(folder_name, filename)
             child_id = create_item_container(media_url, is_carousel=True)
+            
+            # Проверяем статус, если элемент карусели - видео
             if media_url.lower().endswith(('.mp4', '.mov')):
-                check_container_status(child_id)            
+                print("Ожидаем обработки видео элемента карусели...")
+                check_container_status(child_id)
+                
             child_ids.append(child_id)
             time.sleep(2)
-
-        time.sleep(10) # Задержка на обработку медиа серверами Meta
+            
+        time.sleep(5) # Небольшая задержка перед созданием главного контейнера
         
         url = f"{GRAPH_URL}/{USER_ID}/threads"
         payload = {
@@ -164,7 +159,7 @@ def main():
         }
         if topic:
             payload["topic_tag"] = topic
-
+            
         res = requests.post(url, data=payload).json()
         if "id" not in res:
             raise Exception(f"Ошибка создания карусели: {res}")
@@ -186,18 +181,18 @@ def main():
             payload["video_url"] = media_url
         else:
             payload["image_url"] = media_url
-
         if topic:
             payload["topic_tag"] = topic
-
+            
         res = requests.post(url, data=payload).json()
+        if "id" not in res:
+            raise Exception(f"Ошибка создания медиа-поста: {res}")
+        main_container_id = res["id"]
+        
+        # Проверяем статус, если это одиночное видео
         if is_video:
-            print("Ожидаем обработки видео на серверах Meta...")
+            print("Ожидаем обработки основного видео...")
             check_container_status(main_container_id)
-
- # Публикация основного поста
- # time.sleep(10) # Эту задержку можно убрать или оставить для подстраховки
- published_main_id = publish_container(main_container_id)
 
     # --- СЦЕНАРИЙ 3: Только текст ---
     else:
@@ -208,7 +203,7 @@ def main():
         )
 
     # Публикация основного поста
-    time.sleep(10)
+    time.sleep(5) # Дополнительная страховка перед публикацией
     published_main_id = publish_container(main_container_id)
     print(f"Основной пост опубликован! ID: {published_main_id}")
 
@@ -218,7 +213,7 @@ def main():
         print("Публикуем ответ (Reply)...")
         reply_container_id = create_main_container(
             text=post_data["reply_text"],
-            topic_tag=topic if topic else None,  # Теперь топик прикрепляется и к ответу
+            topic_tag=topic if topic else None,
             reply_to_id=published_main_id
         )
         time.sleep(5)
