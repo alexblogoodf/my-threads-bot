@@ -64,6 +64,38 @@ def create_main_container(text, topic_tag=None, media_children=None, reply_to_id
         raise Exception(f"Ошибка создания главного контейнера: {res}")
     return res["id"]
 
+def check_container_status(container_id):
+    """Проверяет статус готовности медиа-контейнера (обязательно для видео)"""
+    url = f"{GRAPH_URL}/{container_id}"
+    payload = {
+        "access_token": ACCESS_TOKEN,
+        "fields": "status,error_message"
+    }
+    
+    # Ожидаем завершения обработки (до 5 минут, проверяя каждые 10 секунд)
+    max_attempts = 30
+    attempt = 0
+    
+    while attempt < max_attempts:
+        res = requests.get(url, params=payload).json()
+        status = res.get("status")
+        
+        if status == "FINISHED":
+            print("✅ Медиа успешно обработано серверами Meta.")
+            return True
+        elif status == "ERROR":
+            error_msg = res.get("error_message", "Неизвестная ошибка")
+            raise Exception(f"❌ Ошибка обработки медиа серверами Meta: {error_msg}")
+        elif status in ["IN_PROGRESS", "PENDING"]:
+            print(f"⏳ Статус обработки: {status}. Ожидаем 10 секунд...")
+            time.sleep(10)
+            attempt += 1
+        else:
+            # EXPIRED или другие статусы
+            raise Exception(f"⚠️ Неожиданный статус контейнера: {res}")
+            
+    raise Exception("⏱ Превышено время ожидания обработки видео (5 минут).")
+
 def publish_container(creation_id):
     """Публикует подготовленный контейнер"""
     url = f"{GRAPH_URL}/{USER_ID}/threads_publish"
@@ -116,6 +148,8 @@ def main():
         for filename in media_files:
             media_url = get_raw_media_url(folder_name, filename)
             child_id = create_item_container(media_url, is_carousel=True)
+            if media_url.lower().endswith(('.mp4', '.mov')):
+                check_container_status(child_id)            
             child_ids.append(child_id)
             time.sleep(2)
 
@@ -157,9 +191,13 @@ def main():
             payload["topic_tag"] = topic
 
         res = requests.post(url, data=payload).json()
-        if "id" not in res:
-            raise Exception(f"Ошибка создания медиа-поста: {res}")
-        main_container_id = res["id"]
+        if is_video:
+            print("Ожидаем обработки видео на серверах Meta...")
+            check_container_status(main_container_id)
+
+ # Публикация основного поста
+ # time.sleep(10) # Эту задержку можно убрать или оставить для подстраховки
+ published_main_id = publish_container(main_container_id)
 
     # --- СЦЕНАРИЙ 3: Только текст ---
     else:
