@@ -6,14 +6,13 @@ import requests
 
 ACCESS_TOKEN = os.environ.get("THREADS_ACCESS_TOKEN")
 USER_ID = os.environ.get("THREADS_USER_ID")
-REPO_NAME = os.environ.get("GITHUB_REPOSITORY") # user/repo
+REPO_NAME = os.environ.get("GITHUB_REPOSITORY")
 BRANCH = os.environ.get("GITHUB_REF_NAME", "main")
 GRAPH_URL = "https://graph.threads.net/v1.0"
 
 def get_raw_media_url(folder_name, filename):
     if not filename:
         return None
-    # Используем jsDelivr CDN для стабильной отдачи медиафайлов
     return f"https://cdn.jsdelivr.net/gh/{REPO_NAME}@{BRANCH}/posts/{folder_name}/{filename}"
 
 def create_item_container(media_url, is_carousel=False):
@@ -29,8 +28,10 @@ def create_item_container(media_url, is_carousel=False):
         payload["video_url"] = media_url
     else:
         payload["image_url"] = media_url
+        
     res = requests.post(url, data=payload).json()
     if "id" not in res:
+        # Если Meta упала (Code 2), скрипт упадет здесь. Завтра cron попробует снова!
         raise Exception(f"Ошибка создания медиа-контейнера: {res}")
     return res["id"]
 
@@ -51,6 +52,7 @@ def create_main_container(text, topic_tag=None, media_children=None, reply_to_id
             payload["children"] = ",".join(media_children)
     else:
         payload["media_type"] = "TEXT"
+        
     res = requests.post(url, data=payload).json()
     if "id" not in res:
         raise Exception(f"Ошибка создания главного контейнера: {res}")
@@ -69,36 +71,31 @@ def publish_container(creation_id):
     return res["id"]
 
 def check_container_status(container_id):
-    """Проверяет статус готовности медиа-контейнера (обязательно для видео)"""
+    """Умная проверка статуса видео. Экономит минуты GitHub Actions."""
     url = f"{GRAPH_URL}/{container_id}"
     payload = {
         "access_token": ACCESS_TOKEN,
         "fields": "status,error_message"
     }
     
-    # Ожидаем завершения обработки (до 5 минут, проверяя каждые 10 секунд)
-    max_attempts = 30
-    attempt = 0
+    # Meta обычно обрабатывает видео 30-60 секунд. 
+    # Спим один раз 45 секунд, чтобы не гонять сервер и не тратить циклы процессора раннера.
+    time.sleep(45) 
     
-    while attempt < max_attempts:
+    max_attempts = 4 # Максимум еще ~2 минуты ожидания
+    for attempt in range(max_attempts):
         res = requests.get(url, params=payload).json()
         status = res.get("status")
         
         if status == "FINISHED":
-            print("✅ Медиа успешно обработано серверами Meta.")
             return True
         elif status == "ERROR":
-            error_msg = res.get("error_message", "Неизвестная ошибка")
-            raise Exception(f"❌ Ошибка обработки медиа серверами Meta: {error_msg}")
-        elif status in ["IN_PROGRESS", "PENDING"]:
-            print(f"⏳ Статус обработки: {status}. Ожидаем 10 секунд...")
-            time.sleep(10)
-            attempt += 1
-        else:
-            # EXPIRED или другие статусы
-            raise Exception(f"⚠️ Неожиданный статус контейнера: {res}")
+            raise Exception(f"Ошибка обработки видео Meta: {res.get('error_message')}")
+        
+        # Если еще в процессе, ждем еще 30 секунд перед следующей проверкой
+        time.sleep(30)
             
-    raise Exception("⏱ Превышено время ожидания обработки видео (5 минут).")
+    raise Exception("Таймаут: Meta не успела обработать видео за 2.5 минуты.")
 
 def main():
     state_file = "state.json"
@@ -129,10 +126,9 @@ def main():
     text = post_data.get('text', '').strip()
     topic = post_data.get('topic', '').strip()
     media_files = post_data.get("media_files", [])
-
     main_container_id = None
 
-    # --- СЦЕНАРИЙ 1: Несколько картинок/видео (Карусель) ---
+    # --- СЦЕНАРИЙ 1: Карусель ---
     if len(media_files) > 1:
         print(f"Обнаружена карусель из {len(media_files)} файлов...")
         child_ids = []
@@ -140,15 +136,13 @@ def main():
             media_url = get_raw_media_url(folder_name, filename)
             child_id = create_item_container(media_url, is_carousel=True)
             
-            # Проверяем статус, если элемент карусели - видео
             if media_url.lower().endswith(('.mp4', '.mov')):
-                print("Ожидаем обработки видео элемента карусели...")
                 check_container_status(child_id)
                 
             child_ids.append(child_id)
-            time.sleep(2)
+            time.sleep(1) # Минимальная задержка, чтобы не упереться в Rate Limit API
             
-        time.sleep(5) # Небольшая задержка перед созданием главного контейнера
+        time.sleep(2) 
         
         url = f"{GRAPH_URL}/{USER_ID}/threads"
         payload = {
@@ -165,7 +159,7 @@ def main():
             raise Exception(f"Ошибка создания карусели: {res}")
         main_container_id = res["id"]
 
-    # --- СЦЕНАРИЙ 2: Одна картинка или видео ---
+    # --- СЦЕНАРИЙ 2: Одиночное медиа ---
     elif len(media_files) == 1:
         print("Обнаружен 1 медиафайл...")
         media_url = get_raw_media_url(folder_name, media_files[0])
@@ -189,9 +183,7 @@ def main():
             raise Exception(f"Ошибка создания медиа-поста: {res}")
         main_container_id = res["id"]
         
-        # Проверяем статус, если это одиночное видео
         if is_video:
-            print("Ожидаем обработки основного видео...")
             check_container_status(main_container_id)
 
     # --- СЦЕНАРИЙ 3: Только текст ---
@@ -203,24 +195,24 @@ def main():
         )
 
     # Публикация основного поста
-    time.sleep(5) # Дополнительная страховка перед публикацией
+    time.sleep(2)
     published_main_id = publish_container(main_container_id)
     print(f"Основной пост опубликован! ID: {published_main_id}")
 
-    # Публикация ответа со ссылкой
+    # Публикация ответа (Reply)
     if post_data.get("reply_text"):
-        time.sleep(5)
+        time.sleep(2)
         print("Публикуем ответ (Reply)...")
         reply_container_id = create_main_container(
             text=post_data["reply_text"],
             topic_tag=topic if topic else None,
             reply_to_id=published_main_id
         )
-        time.sleep(5)
+        time.sleep(2)
         published_reply_id = publish_container(reply_container_id)
         print(f"Ответ опубликован! ID: {published_reply_id}")
 
-    # Обновляем состояние
+    # Обновляем состояние ТОЛЬКО если всё прошло успешно
     state["next_index"] = (current_index + 1) % len(folders)
     with open(state_file, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
