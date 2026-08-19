@@ -13,10 +13,14 @@ GRAPH_URL = "https://graph.threads.net/v1.0"
 def get_raw_media_url(folder_name, filename):
     if not filename:
         return None
-        return f"https://raw.githubusercontent.com/{REPO_NAME}/{BRANCH}/posts/{folder_name}/{filename}"
-        
+    return f"https://raw.githubusercontent.com/{REPO_NAME}/{BRANCH}/posts/{folder_name}/{filename}"
+
 def create_item_container(media_url, is_carousel=False):
     """Создаёт контейнер для одиночного медиа элемента"""
+    # 🛡 ЗАЩИТА: Если URL пустой, не пытаемся вызвать .lower(), а просто выходим
+    if not media_url:
+        return None 
+        
     url = f"{GRAPH_URL}/{USER_ID}/threads"
     is_video = media_url.lower().endswith(('.mp4', '.mov'))
     payload = {
@@ -28,7 +32,6 @@ def create_item_container(media_url, is_carousel=False):
         payload["video_url"] = media_url
     else:
         payload["image_url"] = media_url
-        
     res = requests.post(url, data=payload).json()
     if "id" not in res:
         # Если Meta упала (Code 2), скрипт упадет здесь. Завтра cron попробует снова!
@@ -52,7 +55,6 @@ def create_main_container(text, topic_tag=None, media_children=None, reply_to_id
             payload["children"] = ",".join(media_children)
     else:
         payload["media_type"] = "TEXT"
-        
     res = requests.post(url, data=payload).json()
     if "id" not in res:
         raise Exception(f"Ошибка создания главного контейнера: {res}")
@@ -77,24 +79,19 @@ def check_container_status(container_id):
         "access_token": ACCESS_TOKEN,
         "fields": "status,error_message"
     }
-    
     # Meta обычно обрабатывает видео 30-60 секунд. 
     # Спим один раз 45 секунд, чтобы не гонять сервер и не тратить циклы процессора раннера.
     time.sleep(45) 
-    
     max_attempts = 4 # Максимум еще ~2 минуты ожидания
     for attempt in range(max_attempts):
         res = requests.get(url, params=payload).json()
         status = res.get("status")
-        
         if status == "FINISHED":
             return True
         elif status == "ERROR":
             raise Exception(f"Ошибка обработки видео Meta: {res.get('error_message')}")
-        
         # Если еще в процессе, ждем еще 30 секунд перед следующей проверкой
         time.sleep(30)
-            
     raise Exception("Таймаут: Meta не успела обработать видео за 2.5 минуты.")
 
 def main():
@@ -134,16 +131,24 @@ def main():
         child_ids = []
         for filename in media_files:
             media_url = get_raw_media_url(folder_name, filename)
+            
+            # 🛡 ЗАЩИТА: Если URL пустой, пропускаем этот файл и идем дальше
+            if not media_url:
+                print(f"⚠️ Пропущен пустой элемент в карусели")
+                continue
+                
             child_id = create_item_container(media_url, is_carousel=True)
             
+            # Если функция вернула None, не добавляем в список
+            if not child_id:
+                continue
+                
             if media_url.lower().endswith(('.mp4', '.mov')):
                 check_container_status(child_id)
-                
             child_ids.append(child_id)
             time.sleep(1) # Минимальная задержка, чтобы не упереться в Rate Limit API
             
         time.sleep(2) 
-        
         url = f"{GRAPH_URL}/{USER_ID}/threads"
         payload = {
             "access_token": ACCESS_TOKEN,
@@ -153,7 +158,6 @@ def main():
         }
         if topic:
             payload["topic_tag"] = topic
-            
         res = requests.post(url, data=payload).json()
         if "id" not in res:
             raise Exception(f"Ошибка создания карусели: {res}")
@@ -164,7 +168,6 @@ def main():
         print("Обнаружен 1 медиафайл...")
         media_url = get_raw_media_url(folder_name, media_files[0])
         is_video = media_url.lower().endswith(('.mp4', '.mov'))
-        
         url = f"{GRAPH_URL}/{USER_ID}/threads"
         payload = {
             "access_token": ACCESS_TOKEN,
@@ -177,12 +180,10 @@ def main():
             payload["image_url"] = media_url
         if topic:
             payload["topic_tag"] = topic
-            
         res = requests.post(url, data=payload).json()
         if "id" not in res:
             raise Exception(f"Ошибка создания медиа-поста: {res}")
         main_container_id = res["id"]
-        
         if is_video:
             check_container_status(main_container_id)
 
