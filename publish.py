@@ -125,7 +125,7 @@ def main():
 
     text = post_data.get('text', '').strip()
     topic = post_data.get('topic', '').strip()
-    media_files = post_data.get("media_files", [])
+    media_files = [f for f in post_data.get("media_files", []) if f]
     main_container_id = None
 
     # --- СЦЕНАРИЙ 1: Карусель ---
