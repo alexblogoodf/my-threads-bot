@@ -13,7 +13,7 @@ GRAPH_URL = "https://graph.threads.net/v1.0"
 def get_raw_media_url(folder_name, filename):
     if not filename:
         return None
-        return f"https://raw.githubusercontent.com/{REPO_NAME}/{BRANCH}/posts/{folder_name}/{filename}"
+        return f"https://cdn.jsdelivr.net/gh/{REPO_NAME}@{BRANCH}/posts/{folder_name}/{filename}"
         
 def create_item_container(media_url, is_carousel=False):
     """Создаёт контейнер для одиночного медиа элемента"""
