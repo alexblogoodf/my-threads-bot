@@ -63,12 +63,13 @@ def get_linkedin_channel_id():
     return channels[0]["id"]
 
 
-def buffer_create_document_post(channel_id, text, pdf_url, document_title="wallpaper"):
+def buffer_create_document_post(channel_id, text, pdf_url, thumbnail_url, document_title="wallpaper"):
     """Публикует пост с PDF-документом через Buffer GraphQL."""
     text_lit = json.dumps(text, ensure_ascii=False)
     ch_lit = json.dumps(channel_id)
     url_lit = json.dumps(pdf_url)
     title_lit = json.dumps(document_title, ensure_ascii=False)
+    thumb_lit = json.dumps(thumbnail_url)
 
     query = f'''mutation {{
       createPost(input: {{
@@ -76,7 +77,7 @@ def buffer_create_document_post(channel_id, text, pdf_url, document_title="wallp
         channelId: {ch_lit},
         schedulingType: automatic,
         mode: shareNow,
-        assets: [{{ document: {{ url: {url_lit}, title: {title_lit} }} }}]
+        assets: [{{ document: {{ url: {url_lit}, title: {title_lit}, thumbnailUrl: {thumb_lit} }} }}]
       }}) {{
         ... on PostActionSuccess {{ post {{ id text }} }}
         ... on MutationError {{ message }}
@@ -114,6 +115,19 @@ def find_pdf_file(folder_path):
         return "01.pdf"
     for fname in files:
         if fname.lower().endswith(".pdf"):
+            return fname
+    return None
+
+
+def find_thumbnail(folder_path):
+    """Ищем картинку-превью для PDF (01.jpg или первую попавшуюся .jpg/.png)."""
+    files = sorted(os.listdir(folder_path))
+    if "01.jpg" in files:
+        return "01.jpg"
+    if "01.png" in files:
+        return "01.png"
+    for fname in files:
+        if fname.lower().endswith((".jpg", ".jpeg", ".png")):
             return fname
     return None
 
@@ -218,17 +232,27 @@ def main():
         save_state(state)
         sys.exit(0)
 
-    pdf_url = get_media_url(folder_name, pdf_name)
-    print(f"📄 PDF: {pdf_name} → {pdf_url}")
+    # 6) Ищем картинку-превью (thumbnail)
+    thumb_name = find_thumbnail(folder_path)
+    if not thumb_name:
+        print(f"⚠️ Thumbnail (картинка) не найден в папке {folder_name} — пропускаем.")
+        state["next_index"] = (current_index + 1) % total
+        save_state(state)
+        sys.exit(0)
 
-    # 6) Формируем текст
+    pdf_url = get_media_url(folder_name, pdf_name)
+    thumb_url = get_media_url(folder_name, thumb_name)
+    print(f"📄 PDF: {pdf_name} → {pdf_url}")
+    print(f"🖼 Thumbnail: {thumb_name} → {thumb_url}")
+
+    # 7) Формируем текст
     post_text = build_post_text(post_data)
     print(f"📝 Текст поста:\n{post_text}\n")
 
-    # 7) Публикуем
+    # 8) Публикуем
     try:
         ok, info = buffer_create_document_post(
-            channel_id, post_text, pdf_url, document_title="wallpaper"
+            channel_id, post_text, pdf_url, thumb_url, document_title="wallpaper"
         )
     except Exception as e:
         ok, info = False, str(e)
@@ -239,7 +263,7 @@ def main():
         print(f"❌ Ошибка публикации: {info}")
         sys.exit(1)
 
-    # 8) Обновляем состояние
+    # 9) Обновляем состояние
     state["next_index"] = (current_index + 1) % total
     save_state(state)
     print("💾 Состояние сохранено. Готово!")
