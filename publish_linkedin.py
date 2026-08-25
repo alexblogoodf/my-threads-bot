@@ -17,7 +17,7 @@ POSTS_DIR = "posts"
 
 WALLPAPER_HASHTAGS = (
     "#Wallpaper #Wallpapers #IPhoneWallpaper #MobileWallpaper #Minimalism "
-    "#Design #DigitalArt #Apple #IPhone #TechSetup #Productivity #VisualDesign"
+    "#Apple #IPhone"
 )
 
 
