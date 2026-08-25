@@ -257,8 +257,14 @@ def main():
     except Exception as e:
         ok, info = False, str(e)
 
-    if ok:
-        print(f"✅ Пост опубликован в LinkedIn! ID: {info}")
+    # Проверяем, не дубликат ли это (пост уже был отправлен ранее)
+    already_posted = "already got this one scheduled" in str(info) or "same thing twice" in str(info)
+
+    if ok or already_posted:
+        if already_posted:
+            print(f"⚠️ Buffer сообщает, что пост уже опубликован/запланирован. Считаем успехом.")
+        else:
+            print(f"✅ Пост опубликован в LinkedIn! ID: {info}")
     else:
         print(f"❌ Ошибка публикации: {info}")
         sys.exit(1)
