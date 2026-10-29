@@ -1,0 +1,28 @@
+name: Replace phrases in content.json
+
+on:
+  workflow_dispatch:  # Запуск вручную
+
+jobs:
+  replace:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run replacement script
+        run: python replace_phrases.py
+
+      - name: Commit changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add posts/*/content.json
+          git diff --staged --quiet || git commit -m "Replace phrases in content.json [skip ci]"
+          git push
