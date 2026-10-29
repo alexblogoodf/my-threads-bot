@@ -16,17 +16,11 @@ STATE_FILE = "state_bluesky.json"
 POSTS_DIR = "posts"
 MAX_POST_LENGTH = 300  # Лимит символов для Bluesky
 
-# Хештеги по темам
+# Хештеги привязаны напрямую к значениям поля "topic" из content.json
 HASHTAGS = {
-    "wallpaper": (
-        "#wallpaper #wallpapers #iphone"
-    ),
-    "glyfiq": (
-        "#figma #framer #icondesign"
-    ),
-    "rotime": (
-        "#anbernic #console #retrogaming"
-    ),
+    "wallpaper": "#wallpaper #wallpapers #iphone",
+    "Design Threads": "#figma #framer #icondesign",
+    "Gaming Threads": "#anbernic #console #retrogaming",
 }
 
 
@@ -74,7 +68,7 @@ def get_bluesky_channel_id():
         bluesky_channels = [ch for ch in channels if "bluesky" in ch.get("name", "").lower()]
     
     if not bluesky_channels:
-        print(f"⚠️ Bluesky-канал не найден. Доступные каналы:")
+        print(f"️ Bluesky-канал не найден. Доступные каналы:")
         for ch in channels:
             print(f"  - id={ch.get('id')} service={ch.get('service')} name={ch.get('name')}")
         raise Exception("К Buffer не подключен Bluesky-канал")
@@ -145,37 +139,16 @@ def get_first_image(folder_path):
     return None
 
 
-def detect_topic(post_data, folder_name):
-    """Определяет тему поста для выбора хештегов."""
-    topic = (post_data.get("topic") or "").strip().lower()
-    text = (post_data.get("text") or "").lower()
-    reply = (post_data.get("reply_text") or "").lower()
-    
-    # Проверяем по полю topic
-    if topic in HASHTAGS:
-        return topic
-    
-    # Проверяем по содержимому текста
-    full_text = text + " " + reply
-    if "glyfiq" in full_text or "figma" in full_text or "icon" in full_text:
-        return "glyfiq"
-    if "rotime" in full_text or "anbernic" in full_text or "rg rotate" in full_text:
-        return "rotime"
-    if "wallpaper" in full_text or "iphone" in full_text:
-        return "wallpaper"
-    
-    return None
-
-
-def build_post_text(post_data, topic):
+def build_post_text(post_data):
     """
     Формирует текст поста:
     - text + reply_text (объединены)
     - обрезка до 300 символов с учётом хештегов
-    - добавление хештегов по теме
+    - добавление хештегов по полю topic
     """
     text = (post_data.get("text") or "").strip()
     reply = (post_data.get("reply_text") or "").strip()
+    topic = post_data.get("topic", "").strip()
     
     # Объединяем текст
     if text and reply:
@@ -187,7 +160,7 @@ def build_post_text(post_data, topic):
     else:
         combined = ""
     
-    # Получаем хештеги для темы
+    # Получаем хештеги для темы (точное совпадение по topic)
     hashtags = HASHTAGS.get(topic, "")
     
     if hashtags:
@@ -261,7 +234,7 @@ def main():
     folder_path = os.path.join(POSTS_DIR, folder_name)
     post_path = os.path.join(folder_path, "content.json")
 
-    print(f"📂 Папка: {folder_name} ({current_index + 1}/{total})")
+    print(f" Папка: {folder_name} ({current_index + 1}/{total})")
 
     # 3) Если есть видео → пропускаем
     if folder_has_video(folder_path):
@@ -283,16 +256,17 @@ def main():
         sys.exit(0)
 
     image_url = get_media_url(folder_name, image_name)
-    print(f" Изображение: {image_name} → {image_url}")
+    print(f"🖼 Изображение: {image_name} → {image_url}")
 
-    # 6) Определяем тему и формируем текст
-    topic = detect_topic(post_data, folder_name)
-    if topic:
-        print(f"🏷 Тема: {topic}")
+    # 6) Определяем тему по полю topic
+    topic = post_data.get("topic", "").strip()
+    if topic in HASHTAGS:
+        print(f"🏷 Тема: {topic} → хештеги добавлены")
     else:
-        print(f"🏷 Тема не определена (без хештегов)")
+        print(f"🏷 Тема: {topic} (неизвестная, без хештегов)")
 
-    post_text = build_post_text(post_data, topic)
+    # 7) Формируем текст
+    post_text = build_post_text(post_data)
     print(f"📝 Текст поста ({len(post_text)} символов):\n{post_text}\n")
 
     # Проверка длины
@@ -300,7 +274,7 @@ def main():
         print(f"⚠️ Текст превышает {MAX_POST_LENGTH} символов! Обрезаем...")
         post_text = post_text[:MAX_POST_LENGTH - 3].rstrip() + "..."
 
-    # 7) Публикуем
+    # 8) Публикуем
     try:
         ok, info = buffer_create_image_post(channel_id, post_text, image_url)
     except Exception as e:
@@ -318,7 +292,7 @@ def main():
         print(f"❌ Ошибка публикации: {info}")
         sys.exit(1)
 
-    # 8) Обновляем состояние
+    # 9) Обновляем состояние
     state["next_index"] = (current_index + 1) % total
     save_state(state)
     print("💾 Состояние сохранено. Готово!")
