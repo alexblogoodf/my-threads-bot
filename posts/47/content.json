@@ -1,0 +1,8 @@
+{
+  "topic": "AI Threads",
+  "text": "AI agents are bad at icons. They invent names that don’t exist or draw rough SVG paths. So I made an MCP server for my medical icon library. Your agent searches 900+ hand drawn icons and gets the exact SVG 👇",
+  "media_files": [
+    "01.mp4"
+  ],
+  "reply_text": "See it in action 👉 https://glyfiq.link/"
+}
